@@ -5,14 +5,16 @@ import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.processing.*
 import com.google.devtools.ksp.symbol.*
 import com.google.devtools.ksp.validate
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.ParameterizedTypeName
+import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import io.wispforest.owo.config.Option
 import io.wispforest.owo.config.annotation.Config
 import io.wispforest.owo.config.annotation.Hook
 import io.wispforest.owo.config.annotation.Nest
 
-
-class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): SymbolProcessor {
+class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment) : SymbolProcessor {
     override fun process(resolver: Resolver): List<KSAnnotated> {
 
         val (toProcess, delayed) = resolver.getSymbolsWithAnnotation(Config::class.qualifiedName!!)
@@ -31,10 +33,12 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
     inner class KConfigGenerator(private val kClass: KSClassDeclaration) {
 
         private val logger: KSPLogger
-            get () = environment.logger
+            get() = environment.logger
+
+        private val currentPackage = kClass.qualifiedName!!.getQualifier()
 
         operator fun invoke() {
-            val className = kClass.qualifiedName!! // config model can't be anonymous
+            val className = kClass.qualifiedName!! // Config model can't be anonymous
             val configAnnotation = kClass.getAnnotationsByType<Config>().first()
 
             environment.codeGenerator.createNewFile(
@@ -67,21 +71,20 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
                     )
                 }
                 val typeElement: KSClassDeclaration? = (fieldType.declaration as? KSClassDeclaration)?.let {
-                    it.takeIf { it !== clazz }?:run {
+                    it.takeIf { it !== clazz } ?: run {
                         logger.error("Illegal self-reference in nested config object", field)
                         null
                     }
                 }
-
 
                 if (typeElement != null && field.hasAnnotation<Nest>()) {
                     val (subProps, subClasses) =
                         collectFields(typeElement, defaultHook || field.hasAnnotation<Hook>())
                     nestClasses += subClasses
                     nestClasses += NestedClass(typeElement.simpleName, subProps)
-                    list += NestField(fieldName, Option.Key(fieldName), typeElement.simpleName)
+                    list += NestField(fieldName, Option.Key(fieldName), typeElement.simpleName.asString())
                 } else {
-                    list += ValueField(fieldName, Option.Key(fieldName), field, defaultHook || field.hasAnnotation<Hook>())
+                    list += ValueField(fieldName, Option.Key(fieldName), field, defaultHook || field.hasAnnotation<Hook>(), currentPackage)
                 }
 
             }
@@ -89,7 +92,7 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
             return list to nestClasses
         }
 
-        private fun makeWrapper(config: Config, sourceName: KSName, parameters: Pair<List<ConfigField>, Set<NestedClass>> ): String {
+        private fun makeWrapper(config: Config, sourceName: KSName, parameters: Pair<List<ConfigField>, Set<NestedClass>>): String {
             val writer = Writer()
 
             val properties = parameters.first.asString()
@@ -110,7 +113,7 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
                 class ${config.wrapperName} private constructor(builder: BuilderConsumer) : ConfigWrapper<${sourceName.getShortName()}>(${sourceName.getShortName()}::class.java, builder) {
                     private val parentKey = Option.Key.ROOT
 
-                    constructor(): this({})
+                    constructor() : this({})
 
                     companion object {
                         fun createAndLoad(builder: BuilderConsumer = BuilderConsumer {}): ${config.wrapperName} {
@@ -132,93 +135,108 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
             return writer.toString()
         }
     }
+}
 
-    sealed interface ConfigField {
-        fun appendProperties(writer: Writer)
-    }
+sealed class ConfigField {
+    abstract fun appendProperties(writer: Writer)
+}
 
-    inner class NestField(
-        private val name: String,
-        private val key: Option.Key,
-        private val className: KSName,
-    ): ConfigField {
-        override fun appendProperties(writer: Writer) {
-            writer += """
-                val $name = ${className.asString()}(parentKey.child("${key.asString()}"))
-            """.trimIndent()
-        }
-
-    }
-
-    inner class ValueField(
-        private val fieldName: String,
-        private val key: Option.Key,
-        private val field: KSPropertyDeclaration,
-        private val makeSubscribe: Boolean,
-    ): ConfigField {
-        override fun appendProperties(writer: Writer) {
-            // kotlin delegated properties
-
-
-            val type = field.type.resolve().toTypeName()
-
-            writer += """
-                ${if (field.isMutable) "var" else "val"} ${fieldName}: $type by optionForKey(parentKey.child("${key.asString()}"))!!
-            """.trimIndent()
-
-            writer.nl()
-            if (makeSubscribe) {
-                writer += """
-                    fun subscribeTo${fieldName.replaceFirstChar{ it.uppercase() }}(subscriber: ($type) -> Unit) {
-                        optionForKey<$type>(Option.Key("${key.asString()}"))!!.observe(subscriber)
-                    }
-                """.trimIndent()
-            }
-        }
-
-    }
-
-    inner class NestedClass(
-        val name: KSName,
-        private val props: List<ConfigField>,
-    ) {
-        fun appendClassDeclaration(writer: Writer) {
-            
-            
-            
-            writer += """
-                inner class ${name.asString()}(parentKey: Option.Key) {
-                    
-                    ${props.asString()}
-                    
-                }
-            """.trimIndent()
-        }
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (javaClass != other?.javaClass) return false
-
-            other as NestedClass
-
-            return name == other.name
-        }
-
-        override fun hashCode(): Int {
-            return name.hashCode()
-        }
-
+class NestField(
+    private val name: String,
+    private val key: Option.Key,
+    private val className: String,
+) : ConfigField() {
+    override fun appendProperties(writer: Writer) {
+        writer += """
+            val $name = ${className}(parentKey.child("${key.asString()}"))
+        """.trimIndent()
     }
 
 }
 
-fun Iterable<ConfigAnnotationProcessor.ConfigField>.asString() =
+class ValueField(
+    private val fieldName: String,
+    private val key: Option.Key,
+    private val field: KSPropertyDeclaration,
+    private val makeSubscribe: Boolean,
+    private val currentPackage: String,
+) : ConfigField() {
+
+    override fun appendProperties(writer: Writer) {
+        // Kotlin delegated properties
+        val simplifiedType = simplifyTypeName(field.type.resolve().toTypeName())
+
+        writer += """
+            ${if (field.isMutable) "var" else "val"} $fieldName: $simplifiedType by optionForKey(parentKey.child("${key.asString()}"))!!
+        """.trimIndent()
+
+        writer.nl()
+        if (makeSubscribe) {
+            writer += """
+                fun subscribeTo${fieldName.replaceFirstChar { it.uppercase() }}(subscriber: ($simplifiedType) -> Unit) {
+                    optionForKey<$simplifiedType>(Option.Key("${key.asString()}"))!!.observe(subscriber)
+                }
+            """.trimIndent()
+        }
+    }
+
+    private fun simplifyTypeName(type: TypeName): String {
+        return when (type) {
+            is ParameterizedTypeName -> {
+                val rawType = simplifyClassName(type.rawType)
+                val typeArguments = type.typeArguments.joinToString(", ") { simplifyTypeName(it) }
+                "$rawType<$typeArguments>"
+            }
+            is ClassName -> simplifyClassName(type)
+            else -> type.toString()
+        }
+    }
+
+    private fun simplifyClassName(className: ClassName): String {
+        // If the class is in the same package, or in the kotlin package or its subpackages, use simple name
+        return if (className.packageName == currentPackage || className.packageName == "kotlin" || className.packageName.startsWith("kotlin.")) {
+            className.simpleNames.joinToString(".")
+        } else {
+            className.canonicalName
+        }
+    }
+}
+
+class NestedClass(
+    val name: KSName,
+    private val props: List<ConfigField>,
+) {
+    fun appendClassDeclaration(writer: Writer) {
+        writer += """
+            inner class ${name.asString()}(parentKey: Option.Key) {
+                
+                ${props.asString()}
+                
+            }
+        """.trimIndent()
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as NestedClass
+
+        return name == other.name
+    }
+
+    override fun hashCode(): Int {
+        return name.hashCode()
+    }
+
+}
+
+fun Iterable<ConfigField>.asString() =
     map {
         Writer().apply {
             it.appendProperties(this)
         }
     }.joinToString(separator = "\n") { it.toString() }
-
 
 @OptIn(KspExperimental::class)
 private inline fun <reified T : Annotation> KSAnnotated.getAnnotationsByType() =
