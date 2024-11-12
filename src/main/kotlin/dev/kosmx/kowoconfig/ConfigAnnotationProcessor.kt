@@ -162,8 +162,8 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
             // kotlin delegated properties
 
 
-            val type = field.type.toTypeName()
-            
+            val type = field.type.resolve().toTypeName()
+
             writer += """
                 ${if (field.isMutable) "var" else "val"} ${fieldName}: $type by optionForKey(parentKey.child("${key.asString()}"))!!
             """.trimIndent()
