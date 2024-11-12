@@ -103,20 +103,18 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment): Sy
             writer += ("""
                 package ${sourceName.getQualifier()}
 
-                import blue.endless.jankson.Jankson
                 import io.wispforest.owo.config.ConfigWrapper
                 import io.wispforest.owo.config.Option
-                import io.wispforest.owo.util.Observable
                 import kotlin.reflect.KProperty
 
-                class ${config.wrapperName} private constructor(janksonBuilder: (Jankson.Builder) -> Unit) : ConfigWrapper<${sourceName.getShortName()}>(${sourceName.getShortName()}::class.java, janksonBuilder) {
+                class ${config.wrapperName} private constructor(builder: BuilderConsumer) : ConfigWrapper<${sourceName.getShortName()}>(${sourceName.getShortName()}::class.java, builder) {
                     private val parentKey = Option.Key.ROOT
 
                     constructor(): this({})
 
                     companion object {
-                        fun createAndLoad(janksonBuilder: (Jankson.Builder) -> Unit = {}): ${config.wrapperName} {
-                            return ${config.wrapperName}(janksonBuilder).apply {
+                        fun createAndLoad(builder: BuilderConsumer = BuilderConsumer {}): ${config.wrapperName} {
+                            return ${config.wrapperName}(builder).apply {
                                 load()
                             }
                         }
