@@ -110,10 +110,8 @@ class ConfigAnnotationProcessor(val environment: SymbolProcessorEnvironment) : S
                 import io.wispforest.owo.config.Option
                 import kotlin.reflect.KProperty
 
-                class ${config.wrapperName} private constructor(builder: BuilderConsumer) : ConfigWrapper<${sourceName.getShortName()}>(${sourceName.getShortName()}::class.java, builder) {
+                class ${config.wrapperName} private constructor(builder: BuilderConsumer = BuilderConsumer {}) : ConfigWrapper<${sourceName.getShortName()}>(${sourceName.getShortName()}::class.java, builder) {
                     private val parentKey = Option.Key.ROOT
-
-                    constructor() : this({})
 
                     companion object {
                         fun createAndLoad(builder: BuilderConsumer = BuilderConsumer {}): ${config.wrapperName} {
