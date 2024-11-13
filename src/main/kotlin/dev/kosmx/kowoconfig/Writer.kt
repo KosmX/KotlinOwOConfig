@@ -13,7 +13,7 @@ class Writer(private val builder: StringBuilder = StringBuilder()): CharSequence
                 '{' -> 1
                 '}' -> -1
                 else -> 0
-            } as Int
+            }.toInt()
         }
         if (indentChange < 0) indentLevel += indentChange
         beginLine(text)
